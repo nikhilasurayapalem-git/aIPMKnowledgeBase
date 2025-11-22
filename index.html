@@ -136,34 +136,22 @@
 
 This context provides specialized definitions for technical and managerial topics. For all other general or public domain knowledge, you must use Google Search grounding.
 
-1.  **Data Drift vs. Concept Drift:** Data drift is when input data characteristics change. Concept drift is when the relationship between input and target changes.
-2.  **MLOps CI/CD/CT:** Continuous Training (CT) is unique to MLOps, ensuring models are automatically retrained on new data, differentiating it from traditional software development.
-3.  **AI Product Management:** Requires managing non-deterministic features, focusing on model risk (bias, fairness), and defining metrics based on model impact, not just accuracy.
+1.  Data Drift vs. Concept Drift: Data drift is when input data characteristics change. Concept drift is when the relationship between input and target changes.
+2.  MLOps CI/CD/CT: Continuous Training (CT) is unique to MLOps, ensuring models are automatically retrained on new data, differentiating it from traditional software development.
+3.  AI Product Management: Requires managing non-deterministic features, focusing on model risk (bias, fairness), and defining metrics based on model impact, not just accuracy.
 `;
 
-    // Helper component for chat bubbles
+    // Helper component for chat bubbles - Renders plain text only
     const ChatBubble = ({ message, role }) => {
         const isUser = role === 'user';
         const bgColor = isUser ? 'bg-indigo-600/90 text-white' : 'bg-gray-100 text-gray-800';
         
-        // Simple Markdown rendering for external deployment where it may not be present
-        const formatText = (text) => {
-            // Replace **bold** with <strong>bold</strong>
-            let html = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            // Ensure line breaks are respected
-            return html.split('\n').map((line, index) => (
-                <React.Fragment key={index}>
-                    <p className="whitespace-pre-wrap">{line}</p>
-                    {index < html.split('\n').length - 1 && <br />}
-                </React.Fragment>
-            ));
-        };
-
         return (
             <div className={`flex max-w-[85%] my-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
                 <div className={`flex items-start space-x-2 ${isUser ? 'flex-row-reverse space-x-reverse' : 'flex-row'}`}>
                     <div className={`px-4 py-3 rounded-xl shadow-md ${bgColor} ${isUser ? 'rounded-br-sm' : 'rounded-tl-sm'}`}>
-                        {formatText(message)}
+                        {/* Render the message as plain text, using whitespace-pre-wrap for line breaks */}
+                        <p className="whitespace-pre-wrap">{message}</p>
                     </div>
                 </div>
             </div>
@@ -194,9 +182,10 @@ This context provides specialized definitions for technical and managerial topic
             
             const coreContext = initialContext.trim(); 
             
+            // SYSTEM INSTRUCTION MODIFIED: Strictly disallowing all formatting (**, #, <strong>, etc.)
             const systemInstructionText = `You are a helpful, factual, and web-augmented expert capable of answering questions across all domains, from general public knowledge to specialized technical topics (AI, ML, Product Management, etc.).
                 
-                **Formatting Constraint:** Use simple line breaks for separation. You may use **bolding** for emphasis where appropriate.
+                **Formatting Constraint:** Output must be plain text. Do NOT use any Markdown (like **, #, -, *) or HTML tags (like <strong>, <p>) in your response. Use simple line breaks for separation.
                 
                 **Dual Personality Guidance:**
                 1. **General/Technical Queries:** For any question (except casual chit-chat), your answers must be grounded by combining your internal specialized knowledge (provided in CORE CONTEXT) and extensive, real-time information obtained via Google Search. Maintain a professional, concise, and highly accurate tone.
@@ -350,8 +339,8 @@ This context provides specialized definitions for technical and managerial topic
         const [apiKey, setApiKey] = useState(null);
         const [isReady, setIsReady] = useState(false);
 
+        // Checking local storage first, then setting the key state
         useEffect(() => {
-            // Check local storage for existing key on load
             try {
                 const storedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
                 if (storedKey) {
@@ -364,7 +353,7 @@ This context provides specialized definitions for technical and managerial topic
         }, []);
         
         if (!isReady) {
-            return <div className="text-lg text-gray-500">Loading...</div>; // Simple loading state while checking storage
+            return <div className="text-lg text-gray-500">Loading...</div>;
         }
 
         if (!apiKey) {
