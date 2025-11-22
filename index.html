@@ -1,0 +1,263 @@
+
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduGenie Chatbot</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React and ReactDOM Libraries -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        /* Custom scrollbar for aesthetics */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1; /* Gray-300 */
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background-color: #f1f5f9; /* Gray-100 */
+        }
+        /* Ensure the body and html take full height */
+        html, body, #root {
+            height: 100%;
+            margin: 0;
+        }
+    </style>
+</head>
+<body class="bg-gray-200">
+
+<div id="root" class="flex justify-center items-center p-4">
+    <!-- React app will render here -->
+</div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- API Configuration and Utility Functions ---
+
+    // The API key is managed by the Canvas environment.
+    const apiKey = ""; 
+    const model = "gemini-2.5-flash-preview-09-2025";
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    // Utility function for exponential backoff during API calls
+    const fetchWithRetry = async (url, options, maxRetries = 5) => {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 429) { // Too many requests
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.statusText}`);
+                }
+                return response;
+            } catch (error) {
+                if (i === maxRetries - 1) {
+                    console.error("Fetch failed after multiple retries:", error);
+                    throw error;
+                }
+            }
+        }
+    };
+
+    // --- Main RAG Component ---
+
+    const initialContext = `
+# Core AI/ML/PM/PjM Technical Reference
+
+This context provides specialized definitions for technical and managerial topics. For all other general or public domain knowledge, you must use Google Search grounding.
+
+1.  **Data Drift vs. Concept Drift:** Data drift is when input data characteristics change. Concept drift is when the relationship between input and target changes.
+2.  **MLOps CI/CD/CT:** Continuous Training (CT) is unique to MLOps, ensuring models are automatically retrained on new data, differentiating it from traditional software development.
+3.  **AI Product Management:** Requires managing non-deterministic features, focusing on model risk (bias, fairness), and defining metrics based on model impact, not just accuracy.
+`;
+
+    // Helper component for chat bubbles
+    const ChatBubble = ({ message, role }) => {
+        const isUser = role === 'user';
+        const bgColor = isUser ? 'bg-indigo-600/90 text-white' : 'bg-gray-100 text-gray-800';
+        // Note: Tailwind's self-end/start is applied to the parent's flex container, not here.
+        
+        return (
+            <div className={`flex max-w-[85%] my-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <div className={`flex items-start space-x-2 ${isUser ? 'flex-row-reverse space-x-reverse' : 'flex-row'}`}>
+                    <div className={`px-4 py-3 rounded-xl shadow-md ${bgColor} ${isUser ? 'rounded-br-sm' : 'rounded-tl-sm'}`}>
+                        <p className="whitespace-pre-wrap">{message}</p>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+
+    const App = () => {
+        const [messages, setMessages] = useState([]);
+        const [input, setInput] = useState('');
+        const [isLoading, setIsLoading] = useState(false);
+        const chatEndRef = useRef(null);
+        
+        // Scroll to the latest message
+        useEffect(() => {
+            chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, [messages]);
+
+        const handleSendMessage = async (e) => {
+            e.preventDefault();
+            if (!input.trim() || isLoading) return;
+
+            const userQuery = input.trim();
+            const newMessages = [...messages, { role: 'user', content: userQuery }];
+            setMessages(newMessages);
+            setInput('');
+            setIsLoading(true);
+            
+            const coreContext = initialContext.trim(); 
+            
+            const systemInstructionText = `You are a helpful, factual, and web-augmented expert capable of answering questions across all domains, from general public knowledge to specialized technical topics (AI, ML, Product Management, etc.).
+                
+                **Formatting Constraint:** Do not use Markdown formatting characters like '#' for headings or '*' for list items, bolding, or italics. Output plain, readable text with only simple line breaks for separation.
+                
+                **Dual Personality Guidance:**
+                1. **General/Technical Queries:** For any question (except casual chit-chat), your answers must be grounded by combining your internal specialized knowledge (provided in CORE CONTEXT) and extensive, real-time information obtained via Google Search. Maintain a professional, concise, and highly accurate tone.
+                2. **Casual/Conversational Queries (Chit-Chat):** If the user asks a non-technical question (e.g., "How are you?", "What time is it?", "Tell me a joke"), respond briefly and warmly in a human-like, friendly manner. Do not include any technical information about AI/ML, MLOps, or your function in the response. Do not use Google Search for chit-chat.
+
+                --- CORE CONTEXT (Internal Knowledge Base for consistent foundational definitions) ---
+                ${coreContext}`;
+                
+            const toolsConfig = [{ "google_search": {} }]; // Always use search
+
+            const apiPayload = {
+                 contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+                 systemInstruction: { parts: [{ text: systemInstructionText }] },
+                 tools: toolsConfig
+            };
+
+
+            try {
+                const response = await fetchWithRetry(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(apiPayload)
+                });
+
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "An unexpected error occurred.";
+
+                setMessages((prev) => [
+                    ...prev,
+                    { role: 'model', content: text }
+                ]);
+
+            } catch (error) {
+                console.error("API Call Error:", error);
+                setMessages((prev) => [
+                    ...prev,
+                    { role: 'model', content: `Error: Failed to connect to the model. ${error.message}` }
+                ]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        return (
+            <div className="flex flex-col h-full w-full antialiased justify-center items-center">
+                
+                {/* Main Chat Window Shell (Mobile style) */}
+                <div className="flex flex-col w-full max-w-md h-[95vh] bg-white rounded-3xl shadow-2xl overflow-hidden border-4 border-indigo-700">
+                    
+                    {/* Custom Header */}
+                    <div className="flex items-center justify-between p-4 bg-indigo-600 text-white shadow-lg">
+                        <div className="flex items-center space-x-2">
+                            {/* Genie/Bag/Store Icon Placeholder */}
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M3 1a1 1 0 000 2h1.22l.305 1.222a.997.997 0 00.01.042l1.358 5.43-.893.892C3.74 11.846 4 12.793 4 13a2 2 0 002 2h10a2 2 0 002-2 2 2 0 00-2-2H8.667l.5-1.5h4.94a1 1 0 00.953-.795l.946-4.729A1 1 0 0014.28 3H4.857a1 1 0 00-.798.577L3 5H2a1 1 0 000 2h1zm10 8H7.407l-.75-3H12l.6 3zM16 13a1 1 0 11-2 0 1 1 0 012 0zm-7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+                            </svg>
+                            <span className="text-xl font-bold">EduGenie</span>
+                        </div>
+                        {/* Close Icon (X) - Non-functional, for aesthetic only */}
+                        <button className="p-1 rounded-full hover:bg-indigo-500/50 transition">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    {/* Chat History (Answer Section) */}
+                    <div className="flex-grow p-4 space-y-4 overflow-y-auto custom-scrollbar flex flex-col justify-start">
+                        {messages.length === 0 ? (
+                            <div className="flex items-center justify-center h-full">
+                                <p className="text-gray-500 text-center p-8">
+                                    Welcome! I am **EduGenie**, a web-augmented expert. Ask me anything about the world, or focus on specialized topics like AI and Product Management!
+                                </p>
+                            </div>
+                        ) : (
+                            messages.map((msg, index) => (
+                                <ChatBubble key={index} message={msg.content} role={msg.role} />
+                            ))
+                        )}
+                        <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Input Area (Question Section) */}
+                    <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-gray-100">
+                        <div className="flex items-center space-x-2">
+                            <input
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                placeholder={isLoading ? "Generating response..." : "Ask your question..."}
+                                className="flex-grow p-3 border-2 border-gray-300 rounded-full shadow-inner bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150 ease-in-out"
+                                disabled={isLoading}
+                            />
+                            {/* Placeholder for the emoji/smile icon */}
+                            <span className="text-2xl text-gray-500 cursor-pointer hidden sm:block">😀</span> 
+                            <button
+                                type="submit"
+                                className={`p-3 rounded-full font-bold text-white shadow-lg transition duration-300 ease-in-out flex items-center justify-center
+                                    ${isLoading
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 transform hover:scale-[1.05]'
+                                    }`}
+                                disabled={isLoading}
+                            >
+                                {isLoading ? (
+                                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                ) : (
+                                    // Send Icon (paper airplane)
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform rotate-45 -mt-1 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+                    </form>
+                    
+                    {/* Footer branding element from image, simplified */}
+                    <div className="text-xs text-gray-400 text-center py-1">
+                        <span className="font-semibold text-indigo-500">⚡ Chat</span> powered by Gemini
+                    </div>
+
+                </div>
+            </div>
+        );
+    };
+
+    // Render the App
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>
