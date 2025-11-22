@@ -40,59 +40,10 @@
 <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    const API_KEY_STORAGE_KEY = 'geminiApiKey';
+    // We no longer manage API key client-side. We hit a secure backend proxy endpoint.
+    const PROXY_URL = '/api/gemini-chat';
     const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
     
-    // --- API Key Setup Component ---
-
-    const ApiKeySetup = ({ onApiKeySet }) => {
-        const [keyInput, setKeyInput] = useState('');
-        const [error, setError] = useState('');
-
-        const handleSave = () => {
-            if (keyInput.trim().length > 10) {
-                // Simple length check for validity
-                try {
-                    localStorage.setItem(API_KEY_STORAGE_KEY, keyInput.trim());
-                    setError('');
-                    onApiKeySet(keyInput.trim());
-                } catch (e) {
-                    setError('Failed to save key to local storage.');
-                }
-            } else {
-                setError('Please enter a valid, complete API Key.');
-            }
-        };
-
-        return (
-            <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                <div className="bg-white rounded-xl p-8 shadow-2xl w-full max-w-sm">
-                    <h2 className="text-2xl font-bold mb-4 text-indigo-700">Set Up API Key</h2>
-                    <p className="text-gray-600 mb-6">
-                        To run the chatbot publicly, you need to provide your own Google Gemini API Key. This is stored securely only in your browser.
-                    </p>
-                    <input
-                        type="password"
-                        value={keyInput}
-                        onChange={(e) => setKeyInput(e.target.value)}
-                        placeholder="Enter your Gemini API Key"
-                        className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    {error && <p className="text-red-600 mb-4 text-sm">{error}</p>}
-                    <button
-                        onClick={handleSave}
-                        className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition duration-150 shadow-md"
-                    >
-                        Save Key & Start Chatbot
-                    </button>
-                    <p className="text-xs text-center text-gray-500 mt-4">
-                        <a href="https://makersuite.google.com/app/apikey" target="_blank" className="text-indigo-500 hover:text-indigo-700">Get your key here</a>
-                    </p>
-                </div>
-            </div>
-        );
-    };
-
     // --- API Utility Functions ---
 
     // Utility function for exponential backoff during API calls
@@ -110,13 +61,9 @@
                 }
                 
                 if (!response.ok) {
-                    // Check for 403/401 specifically for API Key errors
+                    // Changed error handling to assume backend issues, not key issues
                     const errorDetails = await response.text();
-                    if (response.status === 400 || response.status === 403) {
-                         // Likely invalid API key format or key not authorized for this model/service
-                         throw new Error(`API Key/Permission Error (Status ${response.status}): Check your key's validity and permissions.`);
-                    }
-                    throw new Error(`API Error (Status ${response.status}): ${response.statusText}. Details: ${errorDetails.substring(0, 100)}...`);
+                    throw new Error(`Proxy/Backend Error (Status ${response.status}): ${response.statusText}. Details: ${errorDetails.substring(0, 100)}...`);
                 }
                 return response;
 
@@ -159,11 +106,11 @@ This context provides specialized definitions for technical and managerial topic
     };
 
 
-    const ChatbotApp = ({ apiKey }) => {
+    const ChatbotApp = () => { // Removed apiKey prop
         const [messages, setMessages] = useState([]);
         const [input, setInput] = useState('');
         const [isLoading, setIsLoading] = useState(false);
-        const [showEmojiPicker, setShowEmojiPicker] = useState(false); // NEW: State for emoji picker visibility
+        const [showEmojiPicker, setShowEmojiPicker] = useState(false);
         const chatEndRef = useRef(null);
         
         // List of emojis to display in the picker
@@ -174,7 +121,7 @@ This context provides specialized definitions for technical and managerial topic
             chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, [messages]);
         
-        // NEW: Function to handle emoji selection
+        // Function to handle emoji selection
         const handleEmojiSelect = (emoji) => {
             setInput(prevInput => prevInput + emoji);
             setShowEmojiPicker(false);
@@ -196,7 +143,7 @@ This context provides specialized definitions for technical and managerial topic
             
             const coreContext = initialContext.trim(); 
             
-            // SYSTEM INSTRUCTION MODIFIED: Strictly disallowing all formatting (**, #, <strong>, etc.)
+            // System Instruction is now sent to the proxy
             const systemInstructionText = `You are a helpful, factual, and web-augmented expert capable of answering questions across all domains, from general public knowledge to specialized technical topics (AI, ML, Product Management, etc.).
                 
                 **Formatting Constraint:** Output must be plain text. Do NOT use any Markdown (like **, #, -, *) or HTML tags (like <strong>, <p>) in your response. Use simple line breaks for separation.
@@ -210,8 +157,7 @@ This context provides specialized definitions for technical and managerial topic
                 
             const toolsConfig = [{ "google_search": {} }]; // Always use search
 
-            const apiUrlWithKey = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
+            // IMPORTANT: API key is NOT included here. The backend proxy will handle authentication.
             const apiPayload = {
                  contents: [{ role: 'user', parts: [{ text: userQuery }] }],
                  systemInstruction: { parts: [{ text: systemInstructionText }] },
@@ -220,14 +166,17 @@ This context provides specialized definitions for technical and managerial topic
 
 
             try {
-                const response = await fetchWithRetry(apiUrlWithKey, {
+                // Call the local proxy URL
+                const response = await fetchWithRetry(PROXY_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(apiPayload)
                 });
 
                 const result = await response.json();
-                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "An unexpected error occurred.";
+                
+                // Assuming the backend proxy forwards the standard Gemini response structure
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || result.response || "An unexpected error occurred. Check your server logs for the proxy response.";
 
                 setMessages((prev) => [
                     ...prev,
@@ -236,23 +185,10 @@ This context provides specialized definitions for technical and managerial topic
 
             } catch (error) {
                 console.error("API Call Error:", error);
-                // Clear the messages on critical failure and show the key setup again if it's an authorization issue
-                if (error.message.includes('API Key/Permission Error')) {
-                    // Use a custom message box or div instead of alert()
-                    const errorMessage = 'Critical Error: The API key seems invalid or unauthorized. Please re-enter your key.';
-                    console.error(errorMessage);
-                    setMessages((prev) => [
-                        ...prev,
-                        { role: 'model', content: errorMessage }
-                    ]);
-                    localStorage.removeItem(API_KEY_STORAGE_KEY);
-                    // window.location.reload(); // Removed to prevent breaking the environment, user must manually refresh or click the settings icon
-                } else {
-                    setMessages((prev) => [
-                        ...prev,
-                        { role: 'model', content: `Error: Failed to connect to the model. ${error.message}` }
-                    ]);
-                }
+                setMessages((prev) => [
+                    ...prev,
+                    { role: 'model', content: `Error: Failed to connect to the backend service. Check if your proxy server is running at ${PROXY_URL}. Details: ${error.message}` }
+                ]);
             } finally {
                 setIsLoading(false);
             }
@@ -273,21 +209,7 @@ This context provides specialized definitions for technical and managerial topic
                             </svg>
                             <span className="text-xl font-bold">EduGenie</span>
                         </div>
-                        {/* Settings Button to re-enter API key */}
-                        <button 
-                            onClick={() => {
-                                // Clear key and force refresh to show modal again
-                                localStorage.removeItem(API_KEY_STORAGE_KEY);
-                                window.location.reload(); 
-                            }}
-                            className="p-1 rounded-full hover:bg-indigo-500/50 transition"
-                            title="Re-enter API Key"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.061.363.308.658.661.86l1.454.877c.825.499 1.767.249 2.271-.519l.214-.309a1.125 1.125 0 0 1 1.745-.31l1.454 1.454a1.125 1.125 0 0 1 .31 1.745l-.31.214c-.77.504-1.02 1.446-.519 2.271l.877 1.454c.202.353.497.6.86.661l1.281.213c.542.09.94.56.94 1.11v2.594c0 .55-.398 1.02-.94 1.11l-1.281.213c-.363.061-.658.308-.86.661l-.877 1.454c-.504.77-1.446 1.02-2.271.519l-.309-.214a1.125 1.125 0 0 1-.31-1.745l-1.454-1.454a1.125 1.125 0 0 1-1.745-.31l-.214.31c-.504.77-1.446 1.02-2.271.519l-1.454-.877a1.125 1.125 0 0 1-.661-.86l-.213-1.281a1.125 1.125 0 0 0-.94-1.11v-2.594c0-.55.398-1.02.94-1.11l1.281-.213c.363-.061.658-.308.86-.661l.877-1.454c.504-.77 1.446-1.02 2.271-.519l.31.214a1.125 1.125 0 0 1 1.745.31l1.454 1.454a1.125 1.125 0 0 1 .31 1.745l-.31.214c-.77.504-1.446 1.02-2.271.519l-.877-1.454a1.125 1.125 0 0 1-.661-.86l-.213-1.281z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
-                            </svg>
-                        </button>
+                        {/* Settings Button is removed as client-side key management is gone. */}
                     </div>
 
                     {/* Chat History (Answer Section) */}
@@ -295,7 +217,7 @@ This context provides specialized definitions for technical and managerial topic
                         {messages.length === 0 ? (
                             <div className="flex items-center justify-center h-full">
                                 <p className="text-gray-500 text-center p-8">
-                                    Welcome! I am **EduGenie**, a web-augmented expert. Ask me anything about the world, or focus on specialized topics like AI and Product Management!
+                                    Welcome! I am **EduGenie**, now ready for public deployment via a secure proxy. Ask me anything!
                                 </p>
                             </div>
                         ) : (
@@ -307,7 +229,7 @@ This context provides specialized definitions for technical and managerial topic
                     </div>
 
                     {/* Input Area (Question Section) */}
-                    <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-gray-100 relative"> {/* Added relative class for picker positioning */}
+                    <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-gray-100 relative"> 
                         
                         {/* Emoji Picker Pop-up */}
                         {showEmojiPicker && (
@@ -379,34 +301,11 @@ This context provides specialized definitions for technical and managerial topic
         );
     };
 
-    // --- Main Root Component to Handle Key State ---
+    // --- Main Root Component to Handle Key State (Simplified) ---
 
     const RootApp = () => {
-        const [apiKey, setApiKey] = useState(null);
-        const [isReady, setIsReady] = useState(false);
-
-        // Checking local storage first, then setting the key state
-        useEffect(() => {
-            try {
-                const storedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
-                if (storedKey) {
-                    setApiKey(storedKey);
-                }
-            } catch (e) {
-                console.error("Could not access local storage:", e);
-            }
-            setIsReady(true);
-        }, []);
-        
-        if (!isReady) {
-            return <div className="text-lg text-gray-500">Loading...</div>;
-        }
-
-        if (!apiKey) {
-            return <ApiKeySetup onApiKeySet={setApiKey} />;
-        }
-
-        return <ChatbotApp apiKey={apiKey} />;
+        // Since API key management is moved to the server, we just render the app.
+        return <ChatbotApp />;
     };
 
     // Render the Root App
